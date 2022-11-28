@@ -1,0 +1,144 @@
+﻿@page "/"
+@inject IJSRuntime JS
+@using AssessmentTransform.Utility
+@using Microsoft.Extensions.Logging
+@using System.Xml
+@using System.Diagnostics
+
+<style>
+    body {
+        background-color: #798EAB;
+    }
+
+    h3 {
+        color: rgb(36, 45, 62);
+        font-weight: bold;
+    }
+
+    p {
+        color: white;
+    }
+</style>
+
+<PageTitle>TRAS Assessment XML Processsing</PageTitle>
+
+<h3>Choose a file with XML content</h3>
+<p>If valid data is found, a zip file will begin to download shortly.</p>
+
+<style>
+    .file-input-zone {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgb(36, 45, 62);
+        color: white;
+        cursor: pointer;
+        position: relative;
+        width: 120px;
+        height: 30px;
+    }
+
+        .file-input-zone:hover {
+            background-color: rgb(66, 10, 17);
+        }
+
+        .file-input-zone input[type=file] {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+</style>
+
+<div class="file-input-zone">
+    <InputFile OnChange="@ProcessFile" single />Choose File
+</div>
+<br/>
+<p style="color:@statusColor; font-weight:bold">@statusMessage</p>
+
+@code {
+    private string statusMessage = string.Empty;
+    private string statusColor = string.Empty;
+    private const string RED = "rgb(66, 10, 17)";
+    private const string BLUE = "rgb(36, 45, 62)";
+    enum Status
+    {
+        Success,
+        Fail
+    }
+
+    private async Task ProcessFile(InputFileChangeEventArgs e)
+    {   
+        statusMessage = string.Empty;
+        statusColor = string.Empty;
+        if (e.File != null)
+        {
+            try
+            {
+                var xmlDoc = await ReadAsXml(e.File);
+                if (xmlDoc != null)
+                {
+                    var zip = new SplitNZip(xmlDoc);
+                    var nodeCount = zip.SplitNodes();
+                    zip.CreateZip();
+                    if (zip.DownloadableZipPath != null)
+                    {
+                        await DownloadFileFromStream(zip.DownloadableZipPath);
+                        UpdateStatus(Status.Success, $"Successfully created zip file for {nodeCount} assessments: {zip.DownloadableZipPath}");
+                    }
+                }
+                else
+                {
+                    UpdateStatus(Status.Fail, $"Could not process {e.File.Name} as XML");
+                }
+            }
+            catch (Exception ex)
+            {
+                UpdateStatus(Status.Fail, $"Processing Failed. {ex.Message}");
+            }
+        }
+    }
+
+    private void UpdateStatus(Status status, string msg)
+    {
+        statusMessage = msg;
+        if ((int)status == 0)
+                statusColor = BLUE;
+
+        if ((int)status == 1)
+            statusColor = RED;
+    }
+
+    private async Task<XmlDocument?> ReadAsXml(IBrowserFile file)
+    {
+        try
+        {
+            var readStream = file.OpenReadStream();
+            var memoryStream = new MemoryStream();
+            await readStream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+
+            var contents = System.Text.Encoding.ASCII.GetString(memoryStream.ToArray());
+            var xmlDoc = new XmlDocument();
+            xmlDoc.LoadXml(contents);
+            return xmlDoc;
+        }
+        catch(Exception ex)
+        {
+            throw new Exception($"'{file.Name}' could not be read as XML: {ex.Message}");
+        }
+    }
+
+
+    private async Task DownloadFileFromStream(string fileName)
+    {
+        using FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read);
+
+        using var streamRef = new DotNetStreamReference(stream: fs);
+
+        await JS.InvokeVoidAsync("downloadFileFromStream", fileName, streamRef);
+        
+        File.Delete(fileName);
+    }
+}
